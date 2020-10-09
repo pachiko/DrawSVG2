@@ -4,7 +4,6 @@
 #include <vector>
 #include <iostream>
 #include <algorithm>
-
 #include "triangulation.h"
 
 using namespace std;
@@ -15,6 +14,8 @@ namespace CMU462 {
 // Implements SoftwareRenderer //
 
 void SoftwareRendererImp::draw_svg( SVG& svg ) {
+   // Cleans the sample_buffer
+   sample_buffer = vector<unsigned char>(w * h * 4, 255);
 
   // set top level transformation
   transformation = svg_2_screen;
@@ -37,7 +38,59 @@ void SoftwareRendererImp::draw_svg( SVG& svg ) {
 
   // resolve and send to render target
   resolve();
+}
 
+// Alpha Blending using Pre-Multiplied Alpha
+Color SoftwareRendererImp::alpha_blend(int index, Color over) {
+    // read current color from buffer
+    Color under = Color();
+    under.r = sample_buffer[index] / 255.f;
+    under.g = sample_buffer[index + 1] / 255.f;
+    under.b = sample_buffer[index + 2] / 255.f;
+    under.a = sample_buffer[index + 3] / 255.f;
+
+    // premultiply alphas
+    under.r *= under.a;
+    under.g *= under.a;
+    under.b *= under.a;
+    over.r *= over.a;
+    over.g *= over.a;
+    over.b *= over.a;
+
+    // Blend
+    Color blend = over + (1 - over.a) * under;
+
+    // Undo premultiply alpha
+    blend.r /= blend.a;
+    blend.g /= blend.a;
+    blend.b /= blend.a;
+
+    return blend;
+}
+
+// Fills a sample in sample_buffer
+void SoftwareRendererImp::fill_sample(int sx, int sy, const Color& color) {
+    // IT IS VERY IMPORTANT TO CHECK BOUNDS
+    if (sx < 0 || sx >= w) return;
+    if (sy < 0 || sy >= h) return;
+
+    int index = 4 * (sx + sy * w);
+    Color blend = alpha_blend(index, color);
+
+    // fill sample - NOT doing alpha blending!
+    sample_buffer[index] = (uint8_t)(blend.r * 255);
+    sample_buffer[index + 1] = (uint8_t)(blend.g * 255);
+    sample_buffer[index + 2] = (uint8_t)(blend.b * 255);
+    sample_buffer[index + 3] = (uint8_t)(blend.a * 255);
+}
+
+// Fills a pixel in target_render using the neighbourhood of samples from sample_buffer
+// Different from CS248, which fills all samples in the pixel (writes to sample_buffer instead)
+void SoftwareRendererImp::fill_pixel(int x, int y, const Color& color) {
+    render_target[4 * (x + y * target_w)] = (uint8_t)(color.r * 255);
+    render_target[4 * (x + y * target_w) + 1] = (uint8_t)(color.g * 255);
+    render_target[4 * (x + y * target_w) + 2] = (uint8_t)(color.b * 255);
+    render_target[4 * (x + y * target_w) + 3] = (uint8_t)(color.a * 255);
 }
 
 void SoftwareRendererImp::set_sample_rate( size_t sample_rate ) {
@@ -45,7 +98,8 @@ void SoftwareRendererImp::set_sample_rate( size_t sample_rate ) {
   // Task 4: 
   // You may want to modify this for supersampling support
   this->sample_rate = sample_rate;
-
+  this->w = sample_rate * target_w;
+  this->h = sample_rate * target_h;
 }
 
 void SoftwareRendererImp::set_render_target( unsigned char* render_target,
@@ -56,14 +110,14 @@ void SoftwareRendererImp::set_render_target( unsigned char* render_target,
   this->render_target = render_target;
   this->target_w = width;
   this->target_h = height;
-
+  set_sample_rate(sample_rate);
 }
 
 void SoftwareRendererImp::draw_element( SVGElement* element ) {
 
   // Task 5 (part 1):
   // Modify this to implement the transformation stack
-
+  transformation = transformation * element->transform;
   switch(element->type) {
     case POINT:
       draw_point(static_cast<Point&>(*element));
@@ -87,12 +141,12 @@ void SoftwareRendererImp::draw_element( SVGElement* element ) {
       draw_image(static_cast<Image&>(*element));
       break;
     case GROUP:
-      draw_group(static_cast<Group&>(*element));
+        draw_group(static_cast<Group&>(*element));
       break;
     default:
       break;
   }
-
+  transformation = transformation * element->transform.inv();
 }
 
 
@@ -208,7 +262,7 @@ void SoftwareRendererImp::draw_image( Image& image ) {
 }
 
 void SoftwareRendererImp::draw_group( Group& group ) {
-
+   
   for ( size_t i = 0; i < group.elements.size(); ++i ) {
     draw_element(group.elements[i]);
   }
@@ -230,12 +284,12 @@ void SoftwareRendererImp::rasterize_point( float x, float y, Color color ) {
   if ( sx < 0 || sx >= target_w ) return;
   if ( sy < 0 || sy >= target_h ) return;
 
-  // fill sample - NOT doing alpha blending!
-  render_target[4 * (sx + sy * target_w)    ] = (uint8_t) (color.r * 255);
-  render_target[4 * (sx + sy * target_w) + 1] = (uint8_t) (color.g * 255);
-  render_target[4 * (sx + sy * target_w) + 2] = (uint8_t) (color.b * 255);
-  render_target[4 * (sx + sy * target_w) + 3] = (uint8_t) (color.a * 255);
-
+  // this rasterizes all samples in the pixel (which is what CS248's fill_pixel() does)
+  for (int i = 0; i < sample_rate; i++) {
+     for (int j = 0; j < sample_rate; j++) {
+          fill_sample(sx * sample_rate + i, sy * sample_rate + j, color);
+     }
+  }
 }
 
 void SoftwareRendererImp::rasterize_line( float x0, float y0,
@@ -244,6 +298,73 @@ void SoftwareRendererImp::rasterize_line( float x0, float y0,
 
   // Task 2: 
   // Implement line rasterization
+
+    if (abs(y1 - y0) < abs(x1 - x0)) {
+        if (x0 > x1)
+            plot_line_low(x1, y1, x0, y0, color);
+        else
+            plot_line_low(x0, y0, x1, y1, color);
+    }
+    else {
+        if (y0 > y1)
+            plot_line_high(x1, y1, x0, y0, color);
+        else
+            plot_line_high(x0, y0, x1, y1, color);
+    }
+}
+
+void SoftwareRendererImp::plot_line_low(float lx, float ly,
+    float ux, float uy, Color color) {
+    float dx = ux - lx;
+    float dy = uy - ly;
+    float yi = 1.0f;
+
+    if (dy < 0.0f) { // go downwards: -1 <= m <= 0
+        yi = -1; // up or down 1 pixel?
+        dy = -dy; // direction?
+    }
+
+    float diff = 2 * dy - dx; // 2*eps*dx + 2*dy < dx; init diff = 2*eps*dx, diff >= 2*dy - dx
+    float y = ly;
+
+    for (float x = lx; x <= ux; x++) {
+        rasterize_point(x, y, color);
+
+        if (diff > 0) {
+            y += yi;
+            diff += 2 * (dy - dx); // 2*dx*eps <- 2*dx*eps + 2*dy - 2*dx
+        }
+        else {
+            diff += 2 * dy; // 2*eps*dx <- 2*eps*dx + 2*dy 
+        }
+    }
+}
+
+void SoftwareRendererImp::plot_line_high(float lx, float ly,
+    float ux, float uy, Color color) {
+    float dx = ux - lx;
+    float dy = uy - ly;
+    float xi = 1.0f; // swapped the axes for steep gradients
+
+    if (dx < 0.0f) { // go downwards: -Inf <= m <= -1
+        xi = -1; // left or right 1 pixel?
+        dx = -dx; // direction?
+    }
+
+    float diff = 2 * dx - dy;
+    float x = lx;
+
+    for (float y = ly; y <= uy; y++) {
+        rasterize_point(x, y, color);
+
+        if (diff > 0) {
+            x += xi;
+            diff += 2 * (dx - dy);
+        }
+        else {
+            diff += 2 * dx;
+        }
+    }
 }
 
 void SoftwareRendererImp::rasterize_triangle( float x0, float y0,
@@ -252,26 +373,138 @@ void SoftwareRendererImp::rasterize_triangle( float x0, float y0,
                                               Color color ) {
   // Task 3: 
   // Implement triangle rasterization
+    Vector2D vA(x1 - x0, y1 - y0);
+    Vector2D vB(x2 - x0, y2 - y0);
 
+    if (cross(vA, vB) < 0) { // swap to CCW; dot product is also fine, but its line with point
+        float xtemp = x1, ytemp = y1;
+        x1 = x2, y1 = y2;
+        x2 = xtemp, y2 = ytemp;
+    }
+
+    // Bound of Triangle
+    // We must clamp and test each sample within the box here.
+    // If we use continuous values (ie floats without clamping), there could be overlap 
+    // and samples from one triangle replaces the other triangle
+    float xmin = floor(min(x0, min(x1, x2)));
+    float ymin = floor(min(y0, min(y1, y2)));
+    float xmax = floor(max(x0, max(x1, x2)));
+    float ymax = floor(max(y0, max(y1, y2)));
+
+    // 3 Edges
+    auto lineTest01 = [&](auto x, auto y) {
+        return (x1 - x0) * y + (y0 - y1) * x + (y1 - y0) * x0 - (x1 - x0) * y0;
+    };
+    auto lineTest12 = [&](auto x, auto y) {
+        return (x2 - x1) * y + (y1 - y2) * x + (y2 - y1) * x1 - (x2 - x1) * y1;
+    };
+    auto lineTest20 = [&](auto x, auto y) {
+        return (x0 - x2) * y + (y2 - y0) * x + (y0 - y2) * x2 - (x0 - x2) * y2;
+    };
+
+    float period = 1.0f / sample_rate;
+    float offset = period * 0.5f;
+
+    // Coverage test for sample points
+    for (float y = ymin; y <= ymax; y++) {
+        for (float x = xmin; x <= xmax; x++) {
+            // This loops through all samples in the pixels (both x & y)
+            for (int i = 0; i < sample_rate; i++) {
+                for (int j = 0; j < sample_rate; j++) {
+                    // sample locations (pixel coordinates)
+                    float xs = x + j * period + offset;
+                    float ys = y + i * period + offset;
+                    if (lineTest01(xs, ys) >= 0 && lineTest12(xs, ys) >= 0 && lineTest20(xs, ys) >= 0) {
+                        // fill in the nearest sample in sample buffer
+                        int sx = (int)floor(xs * sample_rate);
+                        int sy = (int)floor(ys * sample_rate);
+                        fill_sample(sx, sy, color);
+                    }
+                }
+            }
+        }
+    }
+    
+    // This has some thin white lines
+    /*
+    for (float y = ymin; y <= ymax; y += period) {
+        for (float x = xmin; x <= xmax; x += period) { // The order of traversal is slightly different (all x samples before increment y)
+            float xs = x + offset;
+            float ys = y + offset;
+            if (lineTest01(xs, ys) >= 0 && lineTest12(xs, ys) >= 0 && lineTest20(xs, ys) >= 0) {
+                fill_sample((int)floor(xs * sample_rate), (int)floor(ys * sample_rate), color);
+            }
+        }
+    }
+    */
 }
 
-void SoftwareRendererImp::rasterize_image( float x0, float y0,
-                                           float x1, float y1,
-                                           Texture& tex ) {
-  // Task 6: 
-  // Implement image rasterization
+void SoftwareRendererImp::rasterize_image(float x0, float y0,
+                                          float x1, float y1,
+                                          Texture& tex) {
+    // Task 6: 
+    // Implement image rasterization
+    float dx = x1 - x0;
+    float dy = y1 - y0;
 
+    float period = 1.0f / sample_rate;
+    float offset = period * 0.5f;
+    float imgW = x1 - x0;
+    float imgH = y1 - y0;
+
+    for (float y = floor(y0); y <= floor(y1); y++) {
+        for (float x = floor(x0); x <= floor(x1); x++) {
+            for (int i = 0; i < sample_rate; i++) {
+                for (int j = 0; j < sample_rate; j++) {
+                    // sample locations (pixel coordinates)
+                    float xs = x + j * period + offset;
+                    float ys = y + i * period + offset;
+                    
+                    float u = (xs - x0) / imgW;
+                    float v = (ys - y0) / imgH;
+                    Color c = sampler->sample_trilinear(tex, u, v, imgW, imgH);
+
+                    int sx = (int)floor(xs * sample_rate);
+                    int sy = (int)floor(ys * sample_rate);
+                    fill_sample(sx, sy, c);
+                }
+            }
+        }
+    }
 }
 
 // resolve samples to render target
 void SoftwareRendererImp::resolve( void ) {
-
   // Task 4: 
   // Implement supersampling
   // You may also need to modify other functions marked with "Task 4".
-  return;
 
+    // loops through samples
+    for (int i = 0; i < h; i += sample_rate) {
+        for (int j = 0; j < w; j += sample_rate) {
+            int r = 0, g = 0, b = 0, a = 0;
+            float num_samples = sample_rate * sample_rate;
+            // actual pixel coords
+            int x = j / sample_rate;
+            int y = i / sample_rate;
+
+            for (int k = 0; k < sample_rate; k++) {
+                for (int l = 0; l < sample_rate; l++) {
+                    int index = 4 * ((j + l) + (i + k) * w);
+                    r += (int) sample_buffer[index];
+                    g += (int) sample_buffer[index + 1];
+                    b += (int) sample_buffer[index + 2];
+                    a += (int) sample_buffer[index + 3];
+                }
+            }
+
+            r /= num_samples;
+            g /= num_samples;
+            b /= num_samples;
+            a /= num_samples;
+            Color avg = Color(float(r / 255.0f), float(g / 255.0f), float(b / 255.0f), float(a / 255.0f));
+            fill_pixel(x, y, avg);
+        }
+    }
 }
-
-
 } // namespace CMU462

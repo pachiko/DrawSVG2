@@ -43,8 +43,9 @@ void Sampler2DImp::generate_mips(Texture& tex, int startLevel) {
   // allocate sublevels
   int baseWidth  = tex.mipmap[startLevel].width;
   int baseHeight = tex.mipmap[startLevel].height;
+  // L = sqrt(max(Lx**2, Ly**2))
   int numSubLevels = (int)(log2f( (float)max(baseWidth, baseHeight)));
-
+  // d= log2(L)
   numSubLevels = min(numSubLevels, kMaxMipLevels - startLevel - 1);
   tex.mipmap.resize(startLevel + numSubLevels + 1);
 
@@ -64,18 +65,28 @@ void Sampler2DImp::generate_mips(Texture& tex, int startLevel) {
 
   }
 
-  // fill all 0 sub levels with interchanging colors (JUST AS A PLACEHOLDER)
-  Color colors[3] = { Color(1,0,0,1), Color(0,1,0,1), Color(0,0,1,1) };
-  for(size_t i = 1; i < tex.mipmap.size(); ++i) {
+  for(size_t a = 1; a < tex.mipmap.size(); ++a) { // which level
+        MipLevel& mip = tex.mipmap[a];
+        MipLevel& larger = tex.mipmap[a - 1];
+        
+        // same algorithm as resolve()
+        for(size_t i = 0; i < larger.height; i+=2) {
+            for(size_t j = 0; j < larger.width; j+=2) {
+                int accum[] = { 0, 0, 0, 0 };
 
-    Color c = colors[i % 3];
-    MipLevel& mip = tex.mipmap[i];
+                for (size_t k = 0; k < 4; k++) { // 4 neighbours
+                    for (size_t l = 0; l < 4; l++) { // RGBA
+                        accum[l] += larger.texels[4* ((i + k/2) * larger.width + j + k%2) + l];
+                    }
+                }
 
-    for(size_t i = 0; i < 4 * mip.width * mip.height; i += 4) {
-      float_to_uint8( &mip.texels[i], &c.r );
-    }
+                for (size_t l = 0; l < 4; l++) { // RGBA
+                    accum[l] /= 4;
+                    mip.texels[4 * (i/2 * mip.width + j/2) + l] = accum[l];
+                }
+            }
+        }
   }
-
 }
 
 Color Sampler2DImp::sample_nearest(Texture& tex, 
@@ -85,8 +96,19 @@ Color Sampler2DImp::sample_nearest(Texture& tex,
   // Task 6: Implement nearest neighbour interpolation
   
   // return magenta for invalid level
-  return Color(1,0,1,1);
+    if (level >= tex.mipmap.size())
+        return Color(1,0,1,1);
 
+    Color c = Color();
+    MipLevel& mip = tex.mipmap[level];
+    vector<unsigned char>& texels = mip.texels;
+
+    int x = (int) max(0.0f, floor(u * mip.width - 0.5f));
+    int y = (int) max(0.0f, floor(v * mip.height - 0.5f));
+
+    int index = 4 * (x + y * mip.width);
+    uint8_to_float(&c.r, &texels[index]);
+    return c;
 }
 
 Color Sampler2DImp::sample_bilinear(Texture& tex, 
@@ -96,8 +118,41 @@ Color Sampler2DImp::sample_bilinear(Texture& tex,
   // Task 6: Implement bilinear filtering
 
   // return magenta for invalid level
-  return Color(1,0,1,1);
+    if (level >= tex.mipmap.size())
+        return Color(1, 0, 1, 1);
 
+    Color c = Color();
+    MipLevel& mip = tex.mipmap[level];
+    vector<unsigned char>& texels = mip.texels;
+
+    // sample point
+    float x = u * mip.width;
+    float y = v * mip.height;
+
+    // lower coords: 1.8 -> 1, 0.2 -> 0
+    int lx =  max(0, (int) floor(x - 0.5f));
+    int ly =  max(0, (int) floor(y - 0.5f));
+
+    // upper coords: lower coords + 1, but not out-of-bounds
+    int ux = min((int) mip.width - 1, lx + 1);
+    int uy = min((int) mip.height - 1, ly + 1);
+
+    // weights: 1.8 - 1.5 -> 0.3; 3.2 - 2.5 -> 0.7
+    float s = clamp(x - lx - 0.5f, 0.0f, 1.0f);
+    float t = clamp(y - ly - 0.5f, 0.0f, 1.0f);
+
+    Color c1 = Color();
+    Color c2 = Color();
+    Color c3 = Color();
+    Color c4 = Color();
+    uint8_to_float(&c1.r, &texels[4 * (lx + ly * mip.width)]);
+    uint8_to_float(&c2.r, &texels[4 * (ux + ly * mip.width)]);
+    uint8_to_float(&c3.r, &texels[4 * (lx + uy * mip.width)]);
+    uint8_to_float(&c4.r, &texels[4 * (ux + uy * mip.width)]);
+
+    // BiLerp
+    c = (c1 * (1.0f - s) + c2 * s) * (1 - t) + (c3 * (1.0f - s) + c4 * s) * t;
+    return c;
 }
 
 Color Sampler2DImp::sample_trilinear(Texture& tex, 
@@ -106,9 +161,27 @@ Color Sampler2DImp::sample_trilinear(Texture& tex,
 
   // Task 7: Implement trilinear filtering
 
-  // return magenta for invalid level
-  return Color(1,0,1,1);
+    float dudx = tex.width / u_scale;
+    float dvdx = tex.height / u_scale;
+    float dudy = tex.width / v_scale;
+    float dvdy = tex.height / v_scale;
 
+    float Lx2 = dudx * dudx + dvdx * dvdx;
+    float Ly2 = dudy * dudy + dvdy * dvdy;
+
+    float w = max(0.0f, log2f(sqrt(max(Lx2, Ly2)))); // IT IS VERY IMPORTANT TO CHECK BOUNDS
+    int d = int(w);
+    w = w - d;
+
+    if (d >= tex.mipmap.size())
+        return Color(1,0,1,1);
+     
+    Color a = this->sample_bilinear(tex, u, v, d);
+    if ((d + 1) >= tex.mipmap.size())
+        return a;
+
+    Color b = this->sample_bilinear(tex, u, v, d + 1);
+    return (1.0f - w) * a + (w) * b;
 }
 
 } // namespace CMU462

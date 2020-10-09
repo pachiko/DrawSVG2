@@ -133,6 +133,19 @@ class SoftwareRendererImp : public SoftwareRenderer {
   // resolve samples to render target
   void resolve( void );
 
+  // Bresenham's for line gradient: 1 <= abs(m) <= Inf
+  void plot_line_high(float lx, float ly, float ux, float uy, Color color);
+
+  // Bresenham's for line gradient: 0 <= abs(m) <= 1
+  void plot_line_low(float lx, float ly, float ux, float uy, Color color);
+
+  // Helpers //
+  std::vector<unsigned char> sample_buffer; int w; int h;
+  void fill_sample(int sx, int sy, const Color& c);
+  void fill_pixel(int x, int y, const Color& c);
+
+  // Alpha Blending using Pre-Multiplied Alpha
+  Color alpha_blend(int index, Color under);
 }; // class SoftwareRendererImp
 
 
