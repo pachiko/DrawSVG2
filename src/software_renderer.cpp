@@ -292,77 +292,95 @@ void SoftwareRendererImp::rasterize_point( float x, float y, Color color ) {
   }
 }
 
-void SoftwareRendererImp::rasterize_line( float x0, float y0,
-                                          float x1, float y1,
-                                          Color color) {
+void SoftwareRendererImp::rasterize_line(float x0, float y0, float x1, float y1, Color color) {
 
-  // Task 2: 
-  // Implement line rasterization
+    // Task 2: 
+    // Implement line rasterization
+    
+    // Bresenham's Line Algorithm
+    // We try to move the line to octant 0 if it is not. Perform below in the given order
+    // If line is high, swap axes (x <-> y)
+    // If line has -dx, change to +dx by swapping p0 and p1 (both x & y)
+    // If line has -dy, negate dv and dy
+    // Then, just run the algorithm like for octant 0
 
-    if (abs(y1 - y0) < abs(x1 - x0)) {
-        if (x0 > x1)
-            plot_line_low(x1, y1, x0, y0, color);
-        else
-            plot_line_low(x0, y0, x1, y1, color);
+    // Derive this by looking at octant 0.
+    // y = mx + b
+    // y = dy/dx * x + b;
+    // dx*y = dy*x + dx*b
+    // f(x, y) = dy*x - dx*y + dx*b = 0
+
+    // A = dy, B = -dx, C = dx*b
+
+    // D = f(x0 + 1, y0 + 1/2) - f(x0, y0)
+    // D = [dy*(x0 + 1) - dx*(y0 + 1/2) + dx*b] - [dy*x0 - dx*y0 + dx*b]
+    // D = dy - dx/2
+
+    // NOOO no fractions/floating points !!!
+    // We only care about the sign of D, the error
+    // D' = 2 * D
+    // D' = 2*dy - dx
+
+    int dy = y1 - y0; // Delta 'Y'
+    int dx = x1 - x0; // Delta 'X'
+    
+    bool high = std::abs(dy) > std::abs(dx);
+
+    int u0 = x0; // Start 'X'
+    int u1 = x1; // Stop 'X'
+
+    int v0 = y0; // Start 'Y'
+    int v1 = y1; // Stop 'Y'
+
+    int du = 1; // Increment 'X'
+    int dv = 1; // Increment 'Y'
+
+    if (high) { // X <-> Y
+        swap(u0, v0);
+        swap(u1, v1);
+        swap(dx, dy);
     }
-    else {
-        if (y0 > y1)
-            plot_line_high(x1, y1, x0, y0, color);
-        else
-            plot_line_high(x0, y0, x1, y1, color);
-    }
-}
 
-void SoftwareRendererImp::plot_line_low(float lx, float ly,
-    float ux, float uy, Color color) {
-    float dx = ux - lx;
-    float dy = uy - ly;
-    float yi = 1.0f;
-
-    if (dy < 0.0f) { // go downwards: -1 <= m <= 0
-        yi = -1; // up or down 1 pixel?
-        dy = -dy; // direction?
+    if (dx < 0) { // Quadrant 2 -> Quadrant 4, Quadrant 3 -> Quadrant 1
+        swap(u0, u1);
+        swap(v0, v1);
+        dx = -dx;
+        dy = -dy;
     }
 
-    float diff = 2 * dy - dx; // 2*eps*dx + 2*dy < dx; init diff = 2*eps*dx, diff >= 2*dy - dx
-    float y = ly;
+    if (dy < 0) { // Quadrant 4 -> Quadrant 1
+        dv = -1;
+        dy = -dy;
+    }
 
-    for (float x = lx; x <= ux; x++) {
-        rasterize_point(x, y, color);
+    // The first midpoint-error, from (x0, y0) to (x0 + 1, y0 + 0.5)
+    int D = 2*dy - dx;
 
-        if (diff > 0) {
-            y += yi;
-            diff += 2 * (dy - dx); // 2*dx*eps <- 2*dx*eps + 2*dy - 2*dx
+    // From u0 to u1, process the pixel at the given v0. 
+    // Only increase v0 by dv if D > 0. Also update D according to next midpoint
+    for (; u0 <= u1; u0 += du) {
+        // X is still X, Y is still Y. Respect that.
+        if (high) rasterize_point(v0, u0, color);
+        else rasterize_point(u0, v0, color);
+
+        if (D > 0) { // Below the line, need to increment 'Y'
+            v0 += dv;
+            D += 2*(dy - dx);
+
+            // Calculate next midpoint, x + 1, y + 1
+            // delta D = f(x0 + 2, y0 + 3/2) - f(x0 + 1, y0 + 1/2)
+            // = [dy*(x0 + 2) - dx*(y0 + 3/2) + dx*b] - [dy*(x0 + 1) - dx*(y0 + 1/2) + dx*b]
+            // = dy - dx
+            // delta D' = 2*delta D = 2*dy - 2*dx
         }
-        else {
-            diff += 2 * dy; // 2*eps*dx <- 2*eps*dx + 2*dy 
-        }
-    }
-}
+        else { // Above or on the line, remain
+            D += 2*dy;
 
-void SoftwareRendererImp::plot_line_high(float lx, float ly,
-    float ux, float uy, Color color) {
-    float dx = ux - lx;
-    float dy = uy - ly;
-    float xi = 1.0f; // swapped the axes for steep gradients
-
-    if (dx < 0.0f) { // go downwards: -Inf <= m <= -1
-        xi = -1; // left or right 1 pixel?
-        dx = -dx; // direction?
-    }
-
-    float diff = 2 * dx - dy;
-    float x = lx;
-
-    for (float y = ly; y <= uy; y++) {
-        rasterize_point(x, y, color);
-
-        if (diff > 0) {
-            x += xi;
-            diff += 2 * (dx - dy);
-        }
-        else {
-            diff += 2 * dx;
+            // Calculate next midpoint, x + 1, y + 0
+            // delta D = f(x0 + 2, y0 + 1/2) - f(x0 + 1, y0 + 1/2)
+            // = [dy*(x0 + 2) - dx*(y0 + 1/2) + dx*b] - [dy*(x0 + 1) - dx*(y0 + 1/2) + dx*b]
+            // = dy
+            // delta D' = 2*delta D = 2*dy
         }
     }
 }
