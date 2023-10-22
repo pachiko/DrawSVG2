@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="1200" height="1200" viewBox="0 0 1200 1200" version="1.1" id="svg15326" xmlns="http://www.w3.org/2000/svg">
+  <desc id="desc15328">Example polygon01 - star and hexagon</desc>
+  <g id="g3117" transform="matrix(-0.58567338,-0.00187733,-0.00187733,0.58567338,688.1122,470.69627)">
+    <polygon transform="matrix(0.70002789,0,0,0.89582406,133.78879,303.64769)" fill="#ff4000" stroke="#666666" stroke-width="10" id="polygon3119" points="958,137.5 958,262.5 850,325 742,262.6 742,137.5 850,75 "/>
+    <polygon fill="#00bfff" stroke="#666666" stroke-width="10" transform="matrix(0.80560036,0,0,0.8483756,446.78987,139.25539)" id="polygon3121" points="277,301 303,215 231,161 321,161 350,75 379,161 469,161 397,215 423,301 350,250 "/>
+    <polygon points="958,262.5 850,325 742,262.6 742,137.5 850,75 958,137.5 " id="polygon3123" fill="#ff4000" stroke="#666666" stroke-width="10" transform="matrix(0.56218531,0.41711715,-0.53378385,0.71942723,459.35825,-328.65737)"/>
+    <polygon transform="matrix(-0.56218531,0.41711715,0.53378385,0.71942723,997.56155,-328.65737)" fill="#ff4000" stroke="#666666" stroke-width="10" id="polygon3125" points="742,137.5 850,75 958,137.5 958,262.5 850,325 742,262.6 "/>
+    <polygon transform="matrix(-0.21387001,0.66655732,-0.85299185,-0.27368894,1244.7005,-150.46249)" fill="#ff4000" stroke="#666666" stroke-width="10" id="polygon3127" points="850,325 742,262.6 742,137.5 850,75 958,137.5 958,262.5 "/>
+    <polygon points="850,75 958,137.5 958,262.5 850,325 742,262.6 742,137.5 " id="polygon3129" fill="#ff4000" stroke="#666666" stroke-width="10" transform="matrix(0.21387001,0.66655732,0.85299185,-0.27368894,212.00397,-149.34637)"/>
+  </g>
+</svg>

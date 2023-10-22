@@ -363,7 +363,7 @@ void SoftwareRendererImp::rasterize_line(float x0, float y0, float x1, float y1,
         if (high) rasterize_point(v0, u0, color);
         else rasterize_point(u0, v0, color);
 
-        if (D > 0) { // Below the line, need to increment 'Y'
+        if (D > 0) { // Below the line (rightOf, positive), need to increment 'Y'
             v0 += dv;
             D += 2*(dy - dx);
 
@@ -385,19 +385,106 @@ void SoftwareRendererImp::rasterize_line(float x0, float y0, float x1, float y1,
     }
 }
 
-void SoftwareRendererImp::rasterize_triangle( float x0, float y0,
-                                              float x1, float y1,
-                                              float x2, float y2,
-                                              Color color ) {
-  // Task 3: 
-  // Implement triangle rasterization
+
+// Scanline method. The fact that the y-axis goes downwards is VERY IMPORTANT
+void SoftwareRendererImp::rasterize_triangle_scanline( float x0, float y0,
+                                                       float x1, float y1,
+                                                       float x2, float y2,
+                                                       Color color ) {
+    float max_x = max(x0, max(x1, x2));
+    float min_x = min(x0, min(x1, x2));
+    float w = max_x - min_x;
+
+    // Make v0 the lowest, v2 the highest
+    if (y1 < y0) {
+        swap(y0, y1);
+        swap(x0, x1);
+    }
+    if (y2 < y0) {
+        swap(y0, y2);
+        swap(x0, x2);
+    }
+    if (y2 < y1) {
+        swap(y1, y2);
+        swap(x1, x2);
+    }
+
+    if (int(floor(y1)) == int(floor(y0)) ||
+        int(round(y1)) == int(round(y0))) { // flat top... v0 is the highest (the tip)
+        swap(x0, x2);
+        swap(y0, y2);
+    }
+
+    // Make v1 the left. Doesnt matter who is taller
+    if (x1 > x2) {
+        swap(x1, x2);
+        swap(y1, y2);
+    }
+
+
+    // Scanline variables
+    float v = y0;
+
+    float v_border = min(y1, y2); // the midpoint, shouldnt be checked if flat top or bottom
+    int iv_border = round(v_border);
+
+    float v_stop = max(y1, y2); // y1 or y2 doesnt matter if flat top or bottom
+    int iv_stop = round(v_stop);
+
+    bool flatTop = v > v_stop; // flat top
+    float dv = flatTop ? -1 : 1;
+
+    // Left and right edge variables
+    float u1 = x0;
+    float u2 = x0;
+
+    float du1 = (x1 - x0) / (y1 - y0);
+    float du2 = (x2 - x0) / (y2 - y0);
+
+    if (flatTop) {
+        du1 = -du1;
+        du2 = -du2;
+    }
+
+    // Always make scanline start from tip
+    for (; flatTop ? (v >= v_stop) : (v <= v_stop); v += dv) {
+        float min_u = max(min(u1, u2), min_x);
+        float max_u = min(max(u1, u2), max_x);
+
+        for (float u = min_u; u <= max_u; u++) { // Always from left to right
+            fill_sample(round(u), round(v), color);
+        }
+
+        int iv = round(v); // Dont compare the floats, they will never be equal (v += dv)
+
+        if (iv == iv_border && iv != iv_stop) { // Time to swap gradient
+            if (y1 < y2) { // If y1 is the midpoint, swap its gradient
+                du1 = (x2 - x1) / (y2 - y1);
+            } else { // If y2 is the midpoint, swap its gradient
+                du2 = (x1 - x2) / (y1 - y2);
+            }
+        }
+
+        u1 += du1;
+        u2 += du2;
+    }
+}
+
+
+// rasterize a triangle with the point-in-triangle test method
+void SoftwareRendererImp::rasterize_triangle_pointTest(float x0, float y0,
+    float x1, float y1,
+    float x2, float y2,
+    Color color) {
+
+    // Task 3: 
+    // Implement triangle rasterization
     Vector2D vA(x1 - x0, y1 - y0);
     Vector2D vB(x2 - x0, y2 - y0);
 
     if (cross(vA, vB) < 0) { // swap to CCW; dot product is also fine, but its line with point
-        float xtemp = x1, ytemp = y1;
-        x1 = x2, y1 = y2;
-        x2 = xtemp, y2 = ytemp;
+        swap(x1, x2);
+        swap(y1, y2);
     }
 
     // Bound of Triangle
@@ -409,15 +496,16 @@ void SoftwareRendererImp::rasterize_triangle( float x0, float y0,
     float xmax = floor(max(x0, max(x1, x2)));
     float ymax = floor(max(y0, max(y1, y2)));
 
-    // 3 Edges
+    // 3 Edges. Uses the implicit line equation: dy*x - dx*y + dx*b (see Bresenham's)
+    // > 0 -> rightOf
     auto lineTest01 = [&](auto x, auto y) {
-        return (x1 - x0) * y + (y0 - y1) * x + (y1 - y0) * x0 - (x1 - x0) * y0;
+        return (y1 - y0) * x - (x1 - x0) * y + (x1 - x0) * y0 - (y1 - y0) * x0;
     };
     auto lineTest12 = [&](auto x, auto y) {
-        return (x2 - x1) * y + (y1 - y2) * x + (y2 - y1) * x1 - (x2 - x1) * y1;
+        return (y2 - y1) * x - (x2 - x1) * y + (x2 - x1) * y1 - (y2 - y1) * x1;
     };
     auto lineTest20 = [&](auto x, auto y) {
-        return (x0 - x2) * y + (y2 - y0) * x + (y0 - y2) * x2 - (x0 - x2) * y2;
+        return (y0 - y2) * x - (x0 - x2) * y + (x0 - x2) * y2 - (y0 - y2) * x2;
     };
 
     float period = 1.0f / sample_rate;
@@ -432,30 +520,28 @@ void SoftwareRendererImp::rasterize_triangle( float x0, float y0,
                     // sample locations (pixel coordinates)
                     float xs = x + j * period + offset;
                     float ys = y + i * period + offset;
-                    if (lineTest01(xs, ys) >= 0 && lineTest12(xs, ys) >= 0 && lineTest20(xs, ys) >= 0) {
-                        // fill in the nearest sample in sample buffer
-                        int sx = (int)floor(xs * sample_rate);
-                        int sy = (int)floor(ys * sample_rate);
-                        fill_sample(sx, sy, color);
-                    }
+
+                    if (lineTest01(xs, ys) > 0 || lineTest12(xs, ys) > 0 || lineTest20(xs, ys) > 0) continue;
+
+                    // fill in the nearest sample in sample buffer
+                    int sx = (int)floor(xs * sample_rate);
+                    int sy = (int)floor(ys * sample_rate);
+                    fill_sample(sx, sy, color);
                 }
             }
         }
     }
-    
-    // This has some thin white lines
-    /*
-    for (float y = ymin; y <= ymax; y += period) {
-        for (float x = xmin; x <= xmax; x += period) { // The order of traversal is slightly different (all x samples before increment y)
-            float xs = x + offset;
-            float ys = y + offset;
-            if (lineTest01(xs, ys) >= 0 && lineTest12(xs, ys) >= 0 && lineTest20(xs, ys) >= 0) {
-                fill_sample((int)floor(xs * sample_rate), (int)floor(ys * sample_rate), color);
-            }
-        }
-    }
-    */
 }
+
+// Rasterize triangle. More than one way
+void SoftwareRendererImp::rasterize_triangle(float x0, float y0,
+    float x1, float y1,
+    float x2, float y2,
+    Color color) {
+    rasterize_triangle_scanline(x0, y0, x1, y1, x2, y2, color);
+    //rasterize_triangle_pointTest(x0, y0, x1, y1, x2, y2, color);
+}
+
 
 void SoftwareRendererImp::rasterize_image(float x0, float y0,
                                           float x1, float y1,

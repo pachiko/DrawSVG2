@@ -119,6 +119,18 @@ class SoftwareRendererImp : public SoftwareRenderer {
                        float x1, float y1,
                        Color color);
 
+  // rasterize a triangle with the scanline method
+  void rasterize_triangle_scanline(float x0, float y0,
+      float x1, float y1,
+      float x2, float y2,
+      Color color);
+
+  // rasterize a triangle with the point-in-triangle test method
+  void rasterize_triangle_pointTest(float x0, float y0,
+      float x1, float y1,
+      float x2, float y2,
+      Color color);
+
   // rasterize a triangle
   void rasterize_triangle( float x0, float y0,
                            float x1, float y1,
